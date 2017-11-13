@@ -1,3 +1,5 @@
+import json
+
 import requests
 import os
 import shutil
@@ -27,8 +29,7 @@ def download_file(url, name, save_loc):
                     fp.write(chunk)
                     chunk_count += 1
 
-                print("\rDownloading {}: {}%".format(name, min([100, round(
-                    chunk_count * 8192 / int(file.headers.get("Content-Length")) * 100)])), end="")
+                print("\rDownloading {}: {}%".format(name, min([100, round(chunk_count * 8192 / int(file.headers.get("Content-Length")) * 100)])), end="")
             print()
 
     return True
@@ -44,9 +45,10 @@ def download_pack(tin_address, modpack_name):
     modpack = requests.get(tin_address + "/api?modpack={}".format(modpack_name)).json()
 
     for mod in modpack["mods"]:
-        if not download_file(tin_address + "/api?modpack={}&downloadmod={}".format(modpack_name, mod),
-                             modpack["mods"][mod]["name"],
-                             os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod))):
+        for extension in modpack["mods"][mod]["dependencies"]:
+            if not download_file(tin_address + "/api?modpack={}&mod={}&downloadext={}".format(modpack_name, mod, extension), modpack["mods"][mod]["extensions"][extension]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, extension))):
+                return False
+        if not download_file(tin_address + "/api?modpack={}&mod={}&download".format(modpack_name, mod), modpack["mods"][mod]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod))):
             return False
 
     with open(os.path.join(os.getcwd(), "modpacks/{}/version.txt".format(modpack_name)), 'wt') as v_fp:
@@ -61,30 +63,28 @@ def update_pack(tin_address, modpack_name):
 
     modpack = requests.get(tin_address + "/api?modpack={}".format(modpack_name)).json()
 
-    if get_checksum(os.path.join(os.getcwd(), "modpacks/{}/bin/modpack.jar".format(modpack_name))) != \
-            requests.get(tin_address + "/api?modpack={}&getjarchecksum".format(modpack_name)).json()["checksum"]:
-        os.remove(os.path.join(os.getcwd(), "modpacks/{}/bin/modpack.jar".format(modpack_name)))
-        download_file(tin_address + "/api?modpack={}&getjar".format(modpack_name), "modpack.jar",
-                      os.path.join(os.getcwd(), "modpacks/{}/bin/modpack.jar".format(modpack_name)))
-
     for mod in modpack["mods"]:
+        for dependency in modpack["mods"][mod]["dependencies"]:
+            if not os.path.exists(os.path.join(os.getcwd(), "modpacks/{}/mods/{}-dep-{}.jar".format(modpack_name, mod, dependency))):
+                download_file(tin_address + "/api?modpack={}&mod={}&downloaddep={}".format(modpack_name, mod, dependency), modpack["mods"][mod]["dependencies"][dependency]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, dependency)))
+
+            if "remote:" not in modpack["mods"][mod]["link"]:
+                if get_checksum(os.path.join(os.getcwd(), "modpacks/{}/mods/{}-dep-{}.jar".format(modpack_name, mod, dependency))) != requests.get(tin_address + "/api?modpack={}&mod={}&getchecksum".format(modpack_name, mod)).json()["checksum"]:
+                    download_file(tin_address + "/api?modpack={}&mod={}&downloaddep={}".format(modpack_name, mod, dependency), modpack["mods"][mod]["dependencies"][dependency]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, dependency)))
+
         if not os.path.exists(os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod))):
-            download_file(tin_address + "/api?modpack={}&downloadmod={}".format(modpack_name, mod),
-                          modpack["mods"][mod]["name"],
-                          os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod)))
+            download_file(tin_address + "/api?modpack={}&mod={}&download".format(modpack_name, mod), modpack["mods"][mod]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod)))
 
         if "remote:" not in modpack["mods"][mod]["link"]:
-            if get_checksum(os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod))) != \
-                    requests.get(tin_address + "/api?modpack={}&getchecksum={}".format(modpack_name, mod)).json()[
-                        "checksum"]:
-                download_file(tin_address + "/api?modpack={}&downloadmod={}".format(modpack_name, mod),
-                              modpack["mods"][mod]["name"],
-                              os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod)))
+            if get_checksum(os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod))) != requests.get(tin_address + "/api?modpack={}&mod={}&getchecksum".format(modpack_name, mod)).json()["checksum"]:
+                download_file(tin_address + "/api?modpack={}&mod={}&download".format(modpack_name, mod), modpack["mods"][mod]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod)))
 
     installed_mods = [x[:-4] for x in os.listdir(os.path.join(os.getcwd(), "modpacks/{}/mods/".format(modpack_name)))]
     for mod in installed_mods:
         if mod not in modpack["mods"]:
             os.remove(os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod)))
+            for dep in [x for x in installed_mods if "{}-ext".format(mod) in x]:
+                os.remove(os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, dep)))
 
     with open(os.path.join(os.getcwd(), "modpacks/{}/version.txt".format(modpack_name)), 'wt') as v_fp:
         v_fp.write(modpack["version"] + "\n")
@@ -115,14 +115,13 @@ def main():
     url = input("Please enter the Tin Server Address: ")
     modpacks = requests.get(url + "/api?getmodpacks").json()
 
-    if len(modpacks) == 0:
+    if len(modpacks.keys()) == 0:
         print("This server has no modpacks available.")
         exit(0)
 
     print("\nPlease pick one of the installable modpacks: ")
     for i, j in enumerate(modpacks.keys()):
-        print("[{}] {} [{}]: {}".format(i + 1, modpacks[j]["name"], modpacks[j]["version"], modpacks[j]["description"]),
-              end="")
+        print("[{}] {} [{}]: {}".format(i + 1, modpacks[j]["name"], modpacks[j]["version"], modpacks[j]["description"]), end="")
         if os.path.exists(os.path.join(os.getcwd(), "modpacks/{}/version.txt".format(j))):
             with open(os.path.join(os.getcwd(), "modpacks/{}/version.txt".format(j)), 'rt') as v_fp:
                 installed_version = v_fp.read().replace('\n', '')
@@ -184,3 +183,6 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         exit(0)
+    except json.decoder.JSONDecodeError:
+        print("Cannot parse server response!")
+        exit(1)
