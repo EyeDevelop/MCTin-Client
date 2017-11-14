@@ -45,11 +45,11 @@ def download_pack(tin_address, modpack_name):
     modpack = requests.get(tin_address + "/api?modpack={}".format(modpack_name)).json()
 
     for mod in modpack["mods"]:
-        for extension in modpack["mods"][mod]["dependencies"]:
-            if not download_file(tin_address + "/api?modpack={}&mod={}&downloadext={}".format(modpack_name, mod, extension), modpack["mods"][mod]["extensions"][extension]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, extension))):
-                return False
         if not download_file(tin_address + "/api?modpack={}&mod={}&download".format(modpack_name, mod), modpack["mods"][mod]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod))):
             return False
+        for extension in modpack["mods"][mod]["extensions"]:
+            if not download_file(tin_address + "/api?modpack={}&mod={}&downloadext={}".format(modpack_name, mod, extension), modpack["mods"][mod]["extensions"][extension]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, extension))):
+                return False
 
     with open(os.path.join(os.getcwd(), "modpacks/{}/version.txt".format(modpack_name)), 'wt') as v_fp:
         v_fp.write(modpack["version"] + "\n")
@@ -64,14 +64,6 @@ def update_pack(tin_address, modpack_name):
     modpack = requests.get(tin_address + "/api?modpack={}".format(modpack_name)).json()
 
     for mod in modpack["mods"]:
-        for dependency in modpack["mods"][mod]["dependencies"]:
-            if not os.path.exists(os.path.join(os.getcwd(), "modpacks/{}/mods/{}-dep-{}.jar".format(modpack_name, mod, dependency))):
-                download_file(tin_address + "/api?modpack={}&mod={}&downloaddep={}".format(modpack_name, mod, dependency), modpack["mods"][mod]["dependencies"][dependency]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, dependency)))
-
-            if "remote:" not in modpack["mods"][mod]["link"]:
-                if get_checksum(os.path.join(os.getcwd(), "modpacks/{}/mods/{}-dep-{}.jar".format(modpack_name, mod, dependency))) != requests.get(tin_address + "/api?modpack={}&mod={}&getchecksum".format(modpack_name, mod)).json()["checksum"]:
-                    download_file(tin_address + "/api?modpack={}&mod={}&downloaddep={}".format(modpack_name, mod, dependency), modpack["mods"][mod]["dependencies"][dependency]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, dependency)))
-
         if not os.path.exists(os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod))):
             download_file(tin_address + "/api?modpack={}&mod={}&download".format(modpack_name, mod), modpack["mods"][mod]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod)))
 
@@ -79,12 +71,28 @@ def update_pack(tin_address, modpack_name):
             if get_checksum(os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod))) != requests.get(tin_address + "/api?modpack={}&mod={}&getchecksum".format(modpack_name, mod)).json()["checksum"]:
                 download_file(tin_address + "/api?modpack={}&mod={}&download".format(modpack_name, mod), modpack["mods"][mod]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod)))
 
-    installed_mods = [x[:-4] for x in os.listdir(os.path.join(os.getcwd(), "modpacks/{}/mods/".format(modpack_name)))]
+            for extension in modpack["mods"][mod]["extensions"]:
+                if not os.path.exists(os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, extension))):
+                    download_file(tin_address + "/api?modpack={}&mod={}&downloadext={}".format(modpack_name, mod, extension), modpack["mods"][mod]["extensions"][extension]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, extension)))
+
+                if "remote:" not in modpack["mods"][mod]["extensions"][extension]["link"]:
+                    if get_checksum(os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, extension))) != requests.get(tin_address + "/api?modpack={}&mod={}&getextchecksum={}".format(modpack_name, mod, extension)).json()["checksum"]:
+                        download_file(tin_address + "/api?modpack={}&mod={}&downloadext={}".format(modpack_name, mod, extension), modpack["mods"][mod]["extensions"][extension]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, extension)))
+
+    installed_mods_and_exts = [x[:-4] for x in os.listdir(os.path.join(os.getcwd(), "modpacks/{}/mods/".format(modpack_name)))]
+    installed_mods = [x for x in installed_mods_and_exts if "-ext-" not in x]
+    installed_exts = [x for x in installed_mods_and_exts if "-ext-" in x]
     for mod in installed_mods:
         if mod not in modpack["mods"]:
-            os.remove(os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod)))
-            for dep in [x for x in installed_mods if "{}-ext".format(mod) in x]:
-                os.remove(os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, dep)))
+            try:
+                os.remove(os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod)))
+            except FileNotFoundError:
+                pass
+            for dep in installed_exts:
+                try:
+                    os.remove(os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, dep)))
+                except FileNotFoundError:
+                    pass
 
     with open(os.path.join(os.getcwd(), "modpacks/{}/version.txt".format(modpack_name)), 'wt') as v_fp:
         v_fp.write(modpack["version"] + "\n")
@@ -148,7 +156,10 @@ def main():
         print("Press enter when you're done.")
 
         input()
-        os.remove(os.path.join(os.getcwd(), "forge.{}".format(forge_extension)))
+        try:
+            os.remove(os.path.join(os.getcwd(), "forge.{}".format(forge_extension)))
+        except FileNotFoundError:
+            pass
 
         download_pack(url, modpack_name)
         print("Pack successfully downloaded!")
