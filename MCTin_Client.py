@@ -5,6 +5,7 @@ import os
 import shutil
 import hashlib
 import sys
+import getpass
 
 
 def get_checksum(file):
@@ -48,7 +49,8 @@ def download_pack(tin_address, modpack_name):
         if not download_file(tin_address + "/api?modpack={}&mod={}&download".format(modpack_name, mod), modpack["mods"][mod]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod))):
             return False
         for extension in modpack["mods"][mod]["extensions"]:
-            if not download_file(tin_address + "/api?modpack={}&mod={}&downloadext={}".format(modpack_name, mod, extension), modpack["mods"][mod]["extensions"][extension]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, extension))):
+            save_as = os.path.join(os.getcwd(), "modpacks/{}/mods/{}".format(modpack_name, modpack["mods"][mod]["extensions"][extension]["customname"])) if "customname" in modpack["mods"][mod]["extensions"][extension].keys() else os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, extension))
+            if not download_file(tin_address + "/api?modpack={}&mod={}&downloadext={}".format(modpack_name, mod, extension), modpack["mods"][mod]["extensions"][extension]["name"], save_as):
                 return False
 
     with open(os.path.join(os.getcwd(), "modpacks/{}/version.txt".format(modpack_name)), 'wt') as v_fp:
@@ -72,27 +74,42 @@ def update_pack(tin_address, modpack_name):
                 download_file(tin_address + "/api?modpack={}&mod={}&download".format(modpack_name, mod), modpack["mods"][mod]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod)))
 
             for extension in modpack["mods"][mod]["extensions"]:
-                if not os.path.exists(os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, extension))):
-                    download_file(tin_address + "/api?modpack={}&mod={}&downloadext={}".format(modpack_name, mod, extension), modpack["mods"][mod]["extensions"][extension]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, extension)))
+                save_as = os.path.join(os.getcwd(), "modpacks/{}/mods/{}".format(modpack_name, modpack["mods"][mod]["extensions"][extension]["customname"])) if "customname" in modpack["mods"][mod]["extensions"][extension].keys() else os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, extension))
+
+                if not os.path.exists(save_as):
+                    download_file(tin_address + "/api?modpack={}&mod={}&downloadext={}".format(modpack_name, mod, extension), modpack["mods"][mod]["extensions"][extension]["name"], save_as)
 
                 if "remote:" not in modpack["mods"][mod]["extensions"][extension]["link"]:
-                    if get_checksum(os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, extension))) != requests.get(tin_address + "/api?modpack={}&mod={}&getextchecksum={}".format(modpack_name, mod, extension)).json()["checksum"]:
-                        download_file(tin_address + "/api?modpack={}&mod={}&downloadext={}".format(modpack_name, mod, extension), modpack["mods"][mod]["extensions"][extension]["name"], os.path.join(os.getcwd(), "modpacks/{}/mods/{}-ext-{}.jar".format(modpack_name, mod, extension)))
+                    if get_checksum(save_as) != requests.get(tin_address + "/api?modpack={}&mod={}&getextchecksum={}".format(modpack_name, mod, extension)).json()["checksum"]:
+                        download_file(tin_address + "/api?modpack={}&mod={}&downloadext={}".format(modpack_name, mod, extension), modpack["mods"][mod]["extensions"][extension]["name"], save_as)
 
     installed_mods_and_exts = [x[:-4] for x in os.listdir(os.path.join(os.getcwd(), "modpacks/{}/mods/".format(modpack_name)))]
     installed_mods = [x for x in installed_mods_and_exts if "-ext-" not in x]
     installed_exts = [x for x in installed_mods_and_exts if "-ext-" in x]
+
+    for mod in modpack["mods"]:
+        for ext in modpack["mods"][mod]["extensions"]:
+            if "customname" in modpack["mods"][mod]["extensions"][ext].keys():
+                installed_exts.append(modpack["mods"][mod]["extensions"][ext]["customname"][:-4])
+
     for mod in installed_mods:
-        if mod not in modpack["mods"]:
+        if mod not in modpack["mods"] and mod not in installed_exts:
             try:
                 os.remove(os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, mod)))
             except FileNotFoundError:
                 pass
-            for dep in installed_exts:
+            for ext in installed_exts:
                 try:
-                    os.remove(os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, dep)))
+                    os.remove(os.path.join(os.getcwd(), "modpacks/{}/mods/{}.jar".format(modpack_name, ext)))
                 except FileNotFoundError:
                     pass
+
+    for file in installed_mods_and_exts:
+        if file not in installed_mods and file not in installed_exts:
+            try:
+                os.remove(os.path.join(os.getcwd(), file))
+            except FileNotFoundError:
+                pass
 
     with open(os.path.join(os.getcwd(), "modpacks/{}/version.txt".format(modpack_name)), 'wt') as v_fp:
         v_fp.write(modpack["version"] + "\n")
@@ -100,7 +117,24 @@ def update_pack(tin_address, modpack_name):
     return True
 
 
-def install_pack(modpack_name, install_loc):
+def install_pack(modpack_name):
+    username = getpass.getuser()
+    dir = "C:\\Users\\{}\\Appdata\\Roaming\\.minecraft\\".format(username) if sys.platform == "win32" else "/Users/{}/Library/Application Support/minecraft/".format(username) if sys.platform == "darwin" else "/home/{}/.minecraft/".format(username)
+    print("\nPlease enter your minecraft installation directory. [{}]".format(dir))
+    print("Enter a 'd' to use the directory listed above or leave empty for a manual install")
+    mcdir = input(": ")
+
+    if mcdir == 'd':
+        mcdir = dir
+
+    if not mcdir:
+        return False
+
+    if not os.path.exists(mcdir):
+        return False
+
+    install_loc = mcdir
+
     if not os.path.exists(os.path.join(os.getcwd(), "modpacks/{}".format(modpack_name))):
         return False
 
@@ -164,21 +198,18 @@ def main():
         download_pack(url, modpack_name)
         print("Pack successfully downloaded!")
 
-        dir = "C:\\Users\\YourName\\Appdata\\Roaming\\.minecraft\\" if sys.platform == "win32" else "/Users/yourname/Library/Application Support/minecraft/" if sys.platform == "darwin" else "/home/yourname/.minecraft/"
-        print("\nPlease enter your minecraft installation directory. [{}]".format(dir))
-        print("Or leave it empty for a manual install.")
-        mcdir = input(": ")
-
-        if not mcdir:
-            print("\nThe mods to be installed are in {}.".format(os.path.abspath(os.path.join(os.getcwd(), "modpacks/{}/mods".format(modpack_name)))))
-            exit(0)
-
-        install_pack(modpack_name, mcdir)
+        if not install_pack(modpack_name):
+            print("The directory you specified is not valid. Please do a manual install.")
+            print("The mods are listed at {}.".format(os.path.abspath(os.path.join(os.getcwd(), "modpacks/{}/mods".format(modpack_name)))))
+        print("Pack successfully installed!")
     elif iu.lower() == "u":
         if not update_pack(url, modpack_name):
             download_pack(url, modpack_name)
             print("Could not update pack, so reinstalled.")
         else:
+            if not install_pack(modpack_name):
+                print("The directory you specified is not valid. Please do a manual install.")
+                print("The mods are listed at {}.".format(os.path.abspath(os.path.join(os.getcwd(), "modpacks/{}/mods".format(modpack_name)))))
             print("Pack successfully updated!")
     elif iu.lower() == "r":
         if os.path.exists(os.path.join(os.getcwd(), "modpacks/{}".format(modpack_name))):
