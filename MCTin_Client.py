@@ -110,8 +110,8 @@ def install_pack(modpack_name, install_loc):
         shutil.rmtree(os.path.join(install_loc, "mods"))
         os.mkdir(os.path.join(install_loc, "mods"))
 
-    for mod in os.listdir(os.path.join(os.getcwd(), "modpacks/{}/mods/")):
-        shutil.copy2(mod, os.path.join(install_loc, "mods"))
+    for mod in os.listdir(os.path.join(os.getcwd(), "modpacks/{}/mods/".format(modpack_name))):
+        shutil.copy2(os.path.join(os.getcwd(), "modpacks/{}/mods/{}".format(modpack_name, mod)), os.path.join(install_loc, "mods"))
 
     return True
 
